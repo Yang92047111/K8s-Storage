@@ -16,6 +16,62 @@ This experiment demonstrates Kubernetes storage concepts through a hands-on proj
 * Container resource management and health checks
 * E2E testing of storage functionality
 
+## 📚 Kubernetes Storage Concepts
+
+### 🗄️ PersistentVolume (PV)
+A **PersistentVolume** is a cluster-wide storage resource that exists independently of any pod. Think of it as a "storage slot" that Kubernetes manages.
+
+**Key characteristics:**
+- **Cluster-scoped**: Available to all namespaces
+- **Lifecycle independent**: Survives pod deletion and recreation
+- **Admin-provisioned**: Usually created by cluster administrators
+- **Storage abstraction**: Hides underlying storage implementation details
+
+In this project, our PV uses `hostPath` storage, mapping to `/mnt/data` on the Kind node.
+
+### 📋 PersistentVolumeClaim (PVC)
+A **PersistentVolumeClaim** is a request for storage by a pod. It's like a "storage reservation" that applications use to claim storage resources.
+
+**Key characteristics:**
+- **Namespace-scoped**: Belongs to a specific namespace
+- **Resource request**: Specifies size, access modes, and storage class
+- **Binding process**: Kubernetes matches PVCs to suitable PVs
+- **Pod consumption**: Pods reference PVCs, not PVs directly
+
+Our PVC requests 1Gi of storage with `ReadWriteOnce` access mode.
+
+### ⚙️ StorageClass
+A **StorageClass** defines different "classes" of storage with specific characteristics and provisioning methods.
+
+**Key characteristics:**
+- **Dynamic provisioning**: Can automatically create PVs when PVCs are created
+- **Storage parameters**: Defines performance, replication, and other storage features
+- **Provisioner**: Specifies which storage system to use
+- **Binding modes**: Controls when volume binding occurs
+
+Our StorageClass uses:
+- `kubernetes.io/no-provisioner`: No automatic PV creation (static provisioning)
+- `WaitForFirstConsumer`: Delays binding until a pod uses the PVC
+
+### 🔄 How They Work Together
+
+```
+┌─────────────┐    requests    ┌─────────────┐    binds to    ┌─────────────┐
+│     Pod     │ ──────────────► │     PVC     │ ──────────────► │     PV      │
+└─────────────┘                └─────────────┘                └─────────────┘
+                                       │                              │
+                                       │ uses                         │ created by
+                                       ▼                              ▼
+                               ┌─────────────┐                ┌─────────────┐
+                               │StorageClass │                │   Admin     │
+                               └─────────────┘                └─────────────┘
+```
+
+1. **Admin creates** PV and StorageClass
+2. **Application creates** PVC requesting storage
+3. **Kubernetes binds** PVC to suitable PV based on StorageClass
+4. **Pod mounts** the PVC as a volume
+
 ## 🏗️ Architecture
 
 * **Go REST API** with `/write` endpoint that persists data to mounted volume
@@ -106,49 +162,69 @@ make test
 
 ## 📄 Kubernetes Manifests (`/manifests`)
 
-### `storageclass.yaml`
+### 🏷️ `storageclass.yaml` - Storage Configuration
 
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: local-storage
-provisioner: kubernetes.io/no-provisioner
-volumeBindingMode: WaitForFirstConsumer
+  name: local-storage                    # Name referenced by PVCs
+provisioner: kubernetes.io/no-provisioner # No dynamic provisioning
+volumeBindingMode: WaitForFirstConsumer   # Bind when pod is scheduled
 ```
 
-### `pv.yaml`
+**Field explanations:**
+- `provisioner: kubernetes.io/no-provisioner`: Uses static PVs (no automatic creation)
+- `volumeBindingMode: WaitForFirstConsumer`: Delays PVC binding until a pod that uses the PVC is scheduled. This ensures the PV is in the same zone/node as the pod.
+
+### 💾 `pv.yaml` - Physical Storage Definition
 
 ```yaml
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: local-pv
+  name: local-pv                         # Unique PV identifier
 spec:
   capacity:
-    storage: 1Gi
+    storage: 1Gi                         # Available storage space
   accessModes:
-    - ReadWriteOnce
-  storageClassName: local-storage
+    - ReadWriteOnce                      # Single node read-write access
+  storageClassName: local-storage        # Links to StorageClass
   hostPath:
-    path: "/mnt/data"
+    path: "/mnt/data"                    # Host directory path
 ```
 
-### `pvc.yaml`
+**Field explanations:**
+- `capacity.storage: 1Gi`: Total storage capacity available
+- `accessModes: ReadWriteOnce`: Volume can be mounted read-write by a single node
+- `storageClassName`: Must match the StorageClass name for proper binding
+- `hostPath.path`: Directory on the Kind node where data is stored
+
+**Access Modes:**
+- `ReadWriteOnce` (RWO): Mount read-write by single node
+- `ReadOnlyMany` (ROX): Mount read-only by many nodes  
+- `ReadWriteMany` (RWX): Mount read-write by many nodes
+
+### 📝 `pvc.yaml` - Storage Request
 
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: local-pvc
+  name: local-pvc                        # PVC name used by pods
 spec:
   accessModes:
-    - ReadWriteOnce
-  storageClassName: local-storage
+    - ReadWriteOnce                      # Must match PV access mode
+  storageClassName: local-storage        # Requests specific storage class
   resources:
     requests:
-      storage: 1Gi
+      storage: 1Gi                       # Minimum storage needed
 ```
+
+**Field explanations:**
+- `accessModes`: Must be compatible with target PV access modes
+- `storageClassName`: Specifies which StorageClass to use for binding
+- `resources.requests.storage`: Minimum storage capacity required (can be less than PV capacity)
 
 ### `deployment.yaml`
 
